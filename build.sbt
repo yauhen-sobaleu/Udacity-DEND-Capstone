@@ -9,7 +9,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % "2.4.0" % "provided",
   "org.apache.spark" %% "spark-sql" % "2.4.0" % "provided",
   "org.xerial" % "sqlite-jdbc" % "3.28.0",
-  "org.apache.hadoop" % "hadoop-aws" % "2.7.3" excludeAll ExclusionRule(organization = "javax.servlet")
+  "org.apache.hadoop" % "hadoop-aws" % "2.7.3" excludeAll ExclusionRule(organization = "javax.servlet"),
+  "com.github.scopt" %% "scopt" % "3.7.1"
 )
 
 // set custom mergeStrategy to avoid merge conflicts when importing hadoop-aws jar
