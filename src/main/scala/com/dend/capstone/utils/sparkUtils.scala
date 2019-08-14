@@ -2,7 +2,7 @@ package com.dend.capstone.utils
 
 import org.apache.spark.sql.{DataFrame}
 import org.apache.spark.sql.functions._
-import java.time.{ZonedDateTime}
+import java.time.{ZonedDateTime, LocalDate}
 import java.time.format.DateTimeFormatter
 
 /** Object with functions to simplify spark modelling transformations */
@@ -49,6 +49,33 @@ object sparkUtils {
     dimTable
   }
 
+  def createDateDimTable(df:DataFrame): DataFrame = {
+    val date_dim = df
+      .withColumn("date_dim_id", monotonically_increasing_id())
+      .withColumn("date_type", lit("date"))
+      .withColumn("date_actual", col("date"))
+      .withColumn("epoch", unix_timestamp(col("date").cast("timestamp")))
+      .withColumn("day_name", date_format(col("date"), "EEEE"))
+      .withColumn("day_of_week", dayofweek(col("date")))
+      .withColumn("day_of_month", dayofmonth(col("date")))
+      .withColumn("day_of_year", dayofyear(col("date")))
+      .withColumn("week_of_month", date_format(col("date"), "W"))
+      .withColumn("week_of_year", weekofyear(col("date")))
+      .withColumn("month_actual", month(col("date")))
+      .withColumn("month_name", date_format(col("date"), "MMMMM"))
+      .withColumn("month_name_abbreviated", date_format(col("date"), "MMM"))
+      .withColumn("quarter_actual", quarter(col("date")))
+      .withColumn("quarter_name",
+        when(col("quarter_actual") === 1, "First")
+          when(col("quarter_actual") === 2, "Second")
+          when(col("quarter_actual") === 3, "Third")
+          when(col("quarter_actual") === 4, "Fourth"))
+      .withColumn("year_actual", year(col("date")))
+      .drop("date")
+
+    date_dim
+  }
+
   /** Concatenates separate date and time columns in USA wildfires dataset into one datetime column
     *
     * @param df       spark DataFrame
@@ -71,4 +98,19 @@ object sparkUtils {
 
     resultDF
   }
+
+  /** Creates an iterator with consecutive dates values
+    *
+    * @param startDate start date of an interval
+    * @param endDate   end date of an interval
+    * @return
+    */
+  def createDateSequence(startDate: String, endDate: String) : Iterator[LocalDate] = {
+    def dayIterator(start: LocalDate, end: LocalDate) = Iterator.iterate(start)(_ plusDays 1) takeWhile (_ isBefore end)
+
+    val dates = dayIterator(LocalDate.parse(startDate), LocalDate.parse(endDate))
+
+    dates
+  }
+
 }

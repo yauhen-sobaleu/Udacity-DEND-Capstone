@@ -4,7 +4,9 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.apache.log4j._
+
 import com.dend.capstone.utils.sparkUtils._
+import com.dend.capstone.utils.sparkModelling._
 
 object Capstone {
 
@@ -128,11 +130,55 @@ object Capstone {
       stagedWeatherDF
     }
 
+    /** Stage dataframes for further dimensional modelling */
     val stagedWildfiresDF = stageWildfiresDF(wildfiresDF)
     val stagedWeatherDF = stageWeatherDF(weatherOutliers)
 
-    println(stagedWildfiresDF.printSchema())
-    println(stagedWeatherDF.printSchema())
 
+    /** === Create dimensions from wildfires dataset === */
+
+    val sources = createDimTable(stagedWildfiresDF, sourceDimId, sourceCols)
+    val reports = createDimTable(stagedWildfiresDF, reportsDimId, reportsCols)
+    val fireNames = createDimTable(stagedWildfiresDF, fireNamesDimId, fireNamesCols)
+    val fireCauses = createDimTable(stagedWildfiresDF, fireCausesDimId, fireCausesCols)
+    val fireSizes = createDimTable(stagedWildfiresDF, fireSizesDimId, fireSizesCols)
+          .withColumn("lower_bound",
+            when($"fire_size_class" === "A", 0)
+              when($"fire_size_class" === "B", 0.26)
+              when($"fire_size_class" === "C", 10.0)
+              when($"fire_size_class" === "D", 100)
+              when($"fire_size_class" === "E", 300)
+              when($"fire_size_class" === "F", 1000)
+              when($"fire_size_class" === "G", 5000)
+          )
+          .withColumn("upper_bound",
+            when($"fire_size_class" === "A", 0.25)
+              when($"fire_size_class" === "B", 9.9)
+              when($"fire_size_class" === "C", 99.9)
+              when($"fire_size_class" === "D", 299)
+              when($"fire_size_class" === "E", 999)
+              when($"fire_size_class" === "F", 4999)
+              when($"fire_size_class" === "G", null)
+          )
+    val owners = createDimTable(stagedWildfiresDF, ownersDimId, ownersCols)
+    val locations = createDimTable(stagedWildfiresDF, locationsDimId, locationsCols)
+    val weatherTypes = createDimTable(stagedWeatherDF, weatherTypesDimId, weatherTypesCols)
+
+    val df_dates = spark.sparkContext
+      .parallelize(createDateSequence("1990-01-01", "2020-01-01").map(_.toString).toSeq)
+      .toDF("date")
+      .withColumn("date", col("date").cast("date"))
+      .coalesce(1)
+    val dates = createDateDimTable(df_dates)
+
+    println(dates.show(1))
+    println(weatherTypes.show(1))
+    println(locations.show(1))
+    println(owners.show(1))
+    println(fireSizes.show(1))
+    println(fireCauses.show(1))
+    println(fireNames.show(1))
+    println(reports.show(1))
+    println(sources.show(1))
   }
 }
