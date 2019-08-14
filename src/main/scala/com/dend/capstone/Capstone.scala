@@ -20,6 +20,7 @@ object Capstone {
 
     import spark.implicits._
 
+    /** Read in USA wildfires dataset */
     val wildfiresDF = spark.read.format("jdbc")
       .option("url", "jdbc:sqlite:/Users/yauhensobaleu/Downloads/FPA_FOD_20170508.sqlite")
       .option("dbtable",
@@ -67,6 +68,13 @@ object Capstone {
       .option("driver", "org.sqlite.JDBC")
       .load()
 
+    /** Read in USA weather outliers dataset */
+    val weatherOutliers = spark.read.format("com.databricks.spark.csv")
+      .option("header", "true")
+      .load("/Users/yauhensobaleu/Downloads/weather-anomalies-1964-2013.csv")
+      .drop("id", "station_name")
+
+
     def stageWildfiresDF(df: DataFrame): DataFrame = {
 
       /** prepare a list of Decimal columns*/
@@ -110,9 +118,21 @@ object Capstone {
       stagedDF
     }
 
-    val stagedDF = stageWildfiresDF(wildfiresDF)
+    def stageWeatherDF(df: DataFrame): DataFrame = {
 
-    println(stagedDF.show(5))
-    println(stagedDF.printSchema())
+      /** We're interested in temperature data starting from 1992-01-01 only */
+      val stagedWeatherDF = df
+        .withColumn("date_str", $"date_str".cast("date"))
+        .filter($"date_str" >= "1992-01-01")
+
+      stagedWeatherDF
+    }
+
+    val stagedWildfiresDF = stageWildfiresDF(wildfiresDF)
+    val stagedWeatherDF = stageWeatherDF(weatherOutliers)
+
+    println(stagedWildfiresDF.printSchema())
+    println(stagedWeatherDF.printSchema())
+
   }
 }
