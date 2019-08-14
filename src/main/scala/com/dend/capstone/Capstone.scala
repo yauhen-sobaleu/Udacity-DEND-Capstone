@@ -53,7 +53,10 @@ object Capstone {
         val spark = SparkSession
           .builder()
           .appName("DEND_Capstone_Project")
-          .config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:2.7.3")
+          .config("spark.hadoop.fs.s3a.multiobjectdelete.enable","false")
+          .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+          .config("spark.hadoop.fs.s3a.fast.upload","true")
+          .config("spark.speculation", "false")
           .getOrCreate()
 
         import spark.implicits._
@@ -231,8 +234,6 @@ object Capstone {
             $"cont_date_dim_id" as "cont_date_dim_id",
             $"source_id",
             $"reporter_id",
-            $"fire_name_id",
-            $"fire_cause_id",
             $"fire_name_id",
             $"fire_size_id",
             $"fire_cause_id",
