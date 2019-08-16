@@ -53,8 +53,7 @@ object sparkModelling {
   val weatherTypesDimId = "weather_type_id"
   val weatherTypesBucket = "weather_types"
 
-  val wildfiresFactBucket = "fires_fact"
-  val wildfiresFactPartitionCols = Seq("year", "month", "day")
 
+  val wildfiresFactBucket = "fires_fact"
   val weatherOutliersFactBucket = "weather_fact"
 }
