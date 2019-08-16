@@ -47,8 +47,12 @@ object Capstone {
         Logger.getLogger("org").setLevel(Level.ERROR)
 
         val sc = SparkContext.getOrCreate()
-          sc.hadoopConfiguration.set("fs.s3a.access.key", config.aws_key)
-          sc.hadoopConfiguration.set("fs.s3a.secret.key", config.aws_secret)
+
+        sc.hadoopConfiguration.set("fs.s3a.access.key", config.aws_key)
+        sc.hadoopConfiguration.set("fs.s3a.secret.key", config.aws_secret)
+
+        /** Preventing AmazonHttpClient:448 - Unable to execute HTTP request error */
+        sc.hadoopConfiguration.set("fs.s3a.attempts.maximum", "30")
 
         val spark = SparkSession
           .builder()
@@ -244,9 +248,7 @@ object Capstone {
             $"longitude",
             $"discovery_timestamp",
             $"cont_timestamp",
-            year($"discovery_timestamp").alias("year"),
-            month($"discovery_timestamp").alias("month"),
-            dayofmonth($"discovery_timestamp").alias("day")
+            year($"discovery_timestamp").alias("year")
 
           )
 
@@ -266,9 +268,7 @@ object Capstone {
             $"latitude",
             $"max_temp",
             $"min_temp",
-            year($"date_str").alias("year"),
-            month($"date_str").alias("month"),
-            dayofmonth($"date_str").alias("day")
+            year($"date_str").alias("year")
           )
 
         /** === Persist modelled data on AWS S3 === */
@@ -284,16 +284,17 @@ object Capstone {
         weatherTypes.write.mode("overwrite").parquet(config.s3_path + "/" + weatherTypesBucket)
 
         /** persist facts */
-        firesFact.write.partitionBy("year", "month", "day").parquet(config.s3_path + "/" + wildfiresFactBucket)
-        weatherOutliersFact.write.partitionBy("year", "month", "day").parquet(config.s3_path + "/" + weatherOutliersFactBucket)
-
-        sc.stop()
+        firesFact.coalesce(10).write.partitionBy("year").parquet(config.s3_path + "/" + wildfiresFactBucket)
+        weatherOutliersFact.coalesce(10).write.partitionBy("year").parquet(config.s3_path + "/" + weatherOutliersFactBucket)
 
         println("Done")
+
+        sc.stop()
 
       case None =>
       // arguments are bad, error message will have been displayed
     }
 
   }
+
 }
