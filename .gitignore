@@ -6,6 +6,8 @@ target/streams/
 project/project/
 project/target/
 
+.ipynb_checkpoints/
+
 *.iml
 *.class
 *.log
