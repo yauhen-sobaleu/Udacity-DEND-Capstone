@@ -1,3 +1,5 @@
+*.py[cod]
+
 target/scala-2.11/classes/
 target/scala-2.11/resolution-cache/
 target/scala-2.11/streams/
