@@ -1,6 +1,6 @@
 package com.dend.capstone.utils
 
-import org.apache.spark.sql.{DataFrame}
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import java.time.{ZonedDateTime, LocalDate}
 import java.time.format.DateTimeFormatter
@@ -33,11 +33,9 @@ object sparkUtils {
   def createDimTable(df: DataFrame, id: String, cols: Seq[String]): DataFrame = {
     val raw_col_names = cols.map(name => name.toLowerCase())
     val dim_id = id.toLowerCase()
-    val nullPlaceholder = "unknown"
 
     val rawDimTable = df
       .select(raw_col_names.map(name => col(name)):_*)
-      .na.fill(nullPlaceholder)  /** replace all nulls with a string placeholder for easier joins */
       .distinct                  /** apply SELECT DISTINCT logic, select only distinct values for creating a dim table */
       .coalesce(1) /** coalesce df in one partition to guarantee that monotonically_increasing_id() provides consecutive results */
       .orderBy(raw_col_names(0)) /** order by the first column*/
@@ -49,9 +47,25 @@ object sparkUtils {
     dimTable
   }
 
-  def createDateDimTable(df:DataFrame): DataFrame = {
-    val date_dim = df
-      .withColumn("date_dim_id", monotonically_increasing_id())
+  /** Creates a dataframe with dates dimension
+    *
+    * @param startDate  first date of a dimension
+    * @param endDate    last date of a dimension
+    * @param spark      sparkSession
+    * @return
+    */
+  def createDateDimTable(startDate: String, endDate: String, spark: SparkSession): DataFrame = {
+
+    import spark.implicits._
+
+    val df_dates = spark.sparkContext
+      .parallelize(createDateSequence(startDate, endDate).map(_.toString).toSeq)
+      .toDF("date")
+      .withColumn("date", col("date").cast("date"))
+      .coalesce(1)
+
+    val date_dim = df_dates
+      .withColumn("date_dim_id", monotonically_increasing_id() + 1)
       .withColumn("date_type", lit("date"))
       .withColumn("date_actual", col("date"))
       .withColumn("epoch", unix_timestamp(col("date").cast("timestamp")))
@@ -73,7 +87,13 @@ object sparkUtils {
       .withColumn("year_actual", year(col("date")))
       .drop("date")
 
-    date_dim
+    /** create one record to cover use cases where a date is unknown (for safe null joins) */
+    val max_id = date_dim.agg("date_dim_id" -> "max").first().getLong(0) + 1
+    val unknownRecord = Seq((max_id, "unknown", null, null, null, null, null, null, null, null, null, null, null, null, null, null)).toDF()
+
+    val finalDatesDF = date_dim.union(unknownRecord)
+
+    finalDatesDF
   }
 
   /** Concatenates separate date and time columns in USA wildfires dataset into one datetime column

@@ -2,6 +2,8 @@ package com.dend.capstone.utils
 
 object sparkModelling {
 
+  val datesBucket = "dates"
+
   val sourcesCols = Seq(
     "source_system_type",
     "source_system",

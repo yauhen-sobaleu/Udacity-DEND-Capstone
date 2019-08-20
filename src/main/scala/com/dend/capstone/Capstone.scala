@@ -23,10 +23,6 @@ object Capstone {
       val spark = SparkSession
         .builder()
         .appName("DEND_Capstone_Project")
-        .config("spark.hadoop.fs.s3a.multiobjectdelete.enable","false")
-        .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
-        .config("spark.hadoop.fs.s3a.fast.upload","true")
-        .config("spark.speculation", "false")
         .getOrCreate()
 
       /** import config values */
@@ -38,7 +34,7 @@ object Capstone {
 
       sc.hadoopConfiguration.set("fs.s3a.access.key", awsKey)
       sc.hadoopConfiguration.set("fs.s3a.secret.key", awsSecret)
-      sc.hadoopConfiguration.set("fs.s3a.attempts.maximum", "30")  /** Preventing AmazonHttpClient:448 - Unable to execute HTTP request error */
+      sc.hadoopConfiguration.set("fs.s3a.attempts.maximum", "50")  /** Preventing AmazonHttpClient:448 - Unable to execute HTTP request error */
 
       import spark.implicits._
 
@@ -123,8 +119,11 @@ object Capstone {
           .withColumn("LATITUDE", $"LATITUDE".cast(coordinatesDecimalSize))
           .withColumn("LONGITUDE", $"LONGITUDE".cast(coordinatesDecimalSize))
 
+        /** fill null values in *_TIME columns with 0000 to be able to concatenate it with date values */
+        val dfFilled = dfWithIntegersProperDecimals.na.fill("0000", Seq("CONT_TIME", "DISCOVERY_TIME"))
+
         /** combine separate date and time columns*/
-        val dfWithTimestampsDiscovery = concatDateAndTime(dfWithIntegersProperDecimals, "DISCOVERY")
+        val dfWithTimestampsDiscovery = concatDateAndTime(dfFilled, "DISCOVERY")
         val dfWithTimestampsCont = concatDateAndTime(dfWithTimestampsDiscovery, "CONT")
 
         /** lower case all column names and drop redundant data */
@@ -132,8 +131,10 @@ object Capstone {
           .toDF(dfWithTimestampsCont.columns.map(name => name.toLowerCase()):_*)
           .drop(
             "discovery_doy",
+            "discovery_date",
             "discovery_time",
             "cont_doy",
+            "cont_date",
             "cont_time"
           )
         stagedDF
@@ -182,75 +183,103 @@ object Capstone {
       val owners = createDimTable(stagedWildfiresDF, ownersDimId, ownersCols)
       val locations = createDimTable(stagedWildfiresDF, locationsDimId, locationsCols)
       val weatherTypes = createDimTable(stagedWeatherDF, weatherTypesDimId, weatherTypesCols)
-
-      val df_dates = spark.sparkContext
-        .parallelize(createDateSequence("1990-01-01", "2020-01-01").map(_.toString).toSeq)
-        .toDF("date")
-        .withColumn("date", col("date").cast("date"))
-        .coalesce(1)
-
-      val dates = createDateDimTable(df_dates)
+      val dates = createDateDimTable("1990-01-01", "2040-01-01", spark)
 
       /** === Create FACT table for wildfires dataset === */
 
       val disc_dates = dates.toDF(dates.columns.map(name => "disc_" + name):_*)
       val cont_dates = dates.toDF(dates.columns.map(name => "cont_" + name):_*)
 
-      val firesFact = stagedWildfiresDF
+      val stagedWildfiresDFwithDates = stagedWildfiresDF
         .withColumn("disc_date_actual", $"discovery_timestamp".cast("date"))
         .withColumn("cont_date_actual", $"cont_timestamp".cast("date"))
-        .join(broadcast(disc_dates), Seq("disc_date_actual"), "inner")
-        .join(broadcast(cont_dates), Seq("cont_date_actual"), "inner")
-        .join(broadcast(sources), sourcesCols, "inner")
-        .join(broadcast(reports), reportsCols, "inner")
-        .join(fireNames, fireNamesCols, "inner")
-        .join(broadcast(fireCauses), fireCausesCols, "inner")
-        .join(broadcast(fireSizes), fireSizesCols, "inner")
-        .join(broadcast(owners), ownersCols, "inner")
-        .join(broadcast(locations), locationsCols, "inner")
+
+      val firesFact = stagedWildfiresDFwithDates
+        .join(broadcast(disc_dates), stagedWildfiresDFwithDates("disc_date_actual") <=> disc_dates("disc_date_actual"), "inner")
+        .join(broadcast(cont_dates), stagedWildfiresDFwithDates("cont_date_actual") <=> cont_dates("cont_date_actual"), "inner")
+        .join(broadcast(sources),
+            stagedWildfiresDFwithDates("source_system_type") <=> sources("source_system_type") &&
+            stagedWildfiresDFwithDates("source_system") <=> sources("source_system") &&
+            stagedWildfiresDFwithDates("source_reporting_unit") <=> sources("source_reporting_unit") &&
+            stagedWildfiresDFwithDates("source_reporting_unit_name") <=> sources("source_reporting_unit_name"),
+          "inner")
+        .join(broadcast(reports),
+            stagedWildfiresDFwithDates("nwcg_reporting_agency") <=> reports("nwcg_reporting_agency") &&
+            stagedWildfiresDFwithDates("nwcg_reporting_unit_id") <=> reports("nwcg_reporting_unit_id") &&
+            stagedWildfiresDFwithDates("nwcg_reporting_unit_name") <=> reports("nwcg_reporting_unit_name"),
+          "inner")
+        .join(fireNames,
+            stagedWildfiresDFwithDates("fire_name") <=> fireNames("fire_name") &&
+            stagedWildfiresDFwithDates("ics_209_name") <=> fireNames("ics_209_name") &&
+            stagedWildfiresDFwithDates("fire_code") <=> fireNames("fire_code") &&
+            stagedWildfiresDFwithDates("mtbs_fire_name") <=> fireNames("mtbs_fire_name"),
+          "inner")
+        .join(broadcast(fireCauses),
+            stagedWildfiresDFwithDates("stat_cause_code") <=> fireCauses("stat_cause_code") &&
+            stagedWildfiresDFwithDates("stat_cause_descr") <=> fireCauses("stat_cause_descr"),
+          "inner")
+        .join(broadcast(fireSizes),
+          stagedWildfiresDFwithDates("fire_size_class") <=> fireSizes("fire_size_class"),
+          "inner"
+        )
+        .join(broadcast(owners),
+            stagedWildfiresDFwithDates("owner_code") <=> owners("owner_code") &&
+            stagedWildfiresDFwithDates("owner_descr") <=> owners("owner_descr"),
+          "inner"
+        )
+        .join(broadcast(locations),
+            stagedWildfiresDFwithDates("state") <=> locations("state") &&
+            stagedWildfiresDFwithDates("fips_name") <=> locations("fips_name"),
+          "inner"
+        )
         .select(
           $"objectid" as "fire_id",
           $"fpa_id",
           $"disc_date_dim_id" as "discovery_date_id",
-          $"cont_date_dim_id" as "cont_date_dim_id",
+          $"cont_date_dim_id" as "cont_date_id",
           $"source_id",
           $"reporter_id",
           $"fire_name_id",
-          $"fire_size_id",
           $"fire_cause_id",
+          $"fire_size_id",
           $"owner_id",
           $"location_id",
           $"fire_size",
           $"latitude",
+          $"fire_year",
           $"longitude",
-          $"discovery_timestamp",
-          $"cont_timestamp",
-          year($"discovery_timestamp").alias("year")
-
+          $"discovery_timestamp".cast("string"),
+          $"cont_timestamp".cast("string"),
+          $"fire_year".alias("year")
         )
 
       /** === Create FACT table for weather outliers dataset === */
 
       val weather_dates = dates.toDF(dates.columns.map(name => "weather_" + name):_*)
 
-      val weatherOutliersFact = stagedWeatherDF
+      val weatherOutliersFactwithDates = stagedWeatherDF
         .withColumn("weather_date_actual", $"date_str")
-        .join(broadcast(weather_dates), Seq("weather_date_actual"), "inner")
-        .join(broadcast(weatherTypes), Seq("type"), "inner")
+
+      val weatherOutliersFact = weatherOutliersFactwithDates
+        .join(broadcast(weather_dates),
+          weatherOutliersFactwithDates("weather_date_actual") <=> weather_dates("weather_date_actual"), "inner")
+        .join(broadcast(weatherTypes),
+          weatherOutliersFactwithDates("type") <=> weatherTypes("type"), "inner")
         .select(
-          $"serialid" as "weather_outlier_id",
-          $"weather_date_dim_id",
-          $"weather_type_id",
-          $"longitude",
-          $"latitude",
-          $"max_temp",
-          $"min_temp",
-          year($"date_str").alias("year")
-        )
+            $"serialid" as "weather_outlier_id",
+            $"weather_date_dim_id",
+            $"weather_type_id",
+            $"longitude",
+            $"latitude",
+            $"max_temp",
+            $"min_temp",
+            year($"date_str").alias("year")
+          )
 
       /** === Persist modelled data on AWS S3 === */
 
       /** persist dimensions */
+      dates.write.mode("overwrite").parquet("s3a://" + datalakeBucket + "/" + datesBucket)
       sources.write.mode("overwrite").parquet("s3a://" + datalakeBucket + "/" + sourcesBucket)
       reports.write.mode("overwrite").parquet("s3a://" + datalakeBucket + "/" + reportsBucket)
       fireNames.write.mode("overwrite").parquet("s3a://" + datalakeBucket + "/" + fireNamesBucket)
